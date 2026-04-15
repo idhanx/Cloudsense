@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="192" height="192">
+  <!-- Cloud shape with cyan gradient -->
+  <defs>
+    <linearGradient id="cloudGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#06b6d4;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0891b2;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="200" height="200" fill="#010816"/>
+  
+  <!-- Cloud -->
+  <path d="M 50 120 Q 30 120 30 100 Q 30 80 50 80 Q 60 60 80 60 Q 100 50 120 60 Q 140 50 160 60 Q 180 70 180 90 Q 180 110 160 120 Z" 
+        fill="url(#cloudGradient)" stroke="#22d3ee" stroke-width="2"/>
+  
+  <!-- Highlight for dimension -->
+  <ellipse cx="100" cy="85" rx="45" ry="25" fill="#22d3ee" opacity="0.3"/>
+</svg>

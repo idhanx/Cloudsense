@@ -1,0 +1,121 @@
+# CloudSense — .gitignore
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.whl
+*.so
+*.pyd
+
+# ── Virtual Environment ──
+venv/
+env/
+.venv/
+ENV/
+.env/
+
+# ── Environment / Secrets (NEVER commit) ──
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env
+*.secret
+secrets/
+
+# ── Database ──
+*.db
+*.sqlite
+*.sqlite3
+
+# ── Model checkpoints & large binary files ──
+*.pth
+*.pt
+*.onnx
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.npy
+*.npz
+
+# ── Data / Output / Uploads ──
+dataset/
+backend/uploads/
+backend/output/
+backend/config.json
+evaluation_output/
+ml/evaluation/evaluation_output/
+
+# ── Node.js ──
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.cache/
+.npm/
+.yarn/
+yarn-error.log
+
+# ── Build artifacts ──
+dist/
+build/
+*.tsbuildinfo
+.next/
+out/
+
+# ── Cache ──
+.cache/
+.parcel-cache/
+.eslintcache
+*.eslintcache
+
+# ── Testing ──
+coverage/
+.coverage
+htmlcov/
+.pytest_cache/
+.nyc_output/
+
+# ── IDE ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# ── OS ──
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# ── Logs ──
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pip-log.txt
+
+# ── Jupyter ──
+.ipynb_checkpoints/
+*.ipynb
+
+# ── Misc ──
+*.bak
+*.tmp
+*.temp
+*.orig
+.kiro/
