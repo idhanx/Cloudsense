@@ -26,3 +26,5 @@ netcdf4>=1.6.0
 
 # Database (Neon PostgreSQL)
 psycopg2-binary>=2.9.0
+sqlalchemy>=2.0.0
+alembic>=1.13.0
