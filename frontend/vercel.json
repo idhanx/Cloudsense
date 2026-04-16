@@ -12,16 +12,14 @@
   "routes": [
     {
       "src": "/assets/(.*)",
-      "headers": { "Cache-Control": "public, max-age=31536000, immutable" },
+      "headers": {
+        "Cache-Control": "public, max-age=31536000, immutable"
+      },
       "dest": "/assets/$1"
     },
     {
       "src": "/(.*)",
       "dest": "/index.html"
     }
-  ],
-  "env": {
-    "VITE_API_URL": "@cloudsense_api_url",
-    "VITE_GOOGLE_CLIENT_ID": "@google_client_id"
-  }
+  ]
 }
