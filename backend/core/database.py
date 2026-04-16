@@ -181,9 +181,9 @@ if _is_postgres:
                         bt = det.get("min_bt")
                         if bt and (min_bt is None or bt < min_bt):
                             min_bt = bt
-                except:
-                    pass
-        
+                except Exception as e:
+                    logger.warning(f"Failed to parse results row (pg): {e}")
+
         return {
             "total_analyses": row[0] if row else 0,
             "completed_analyses": row[1] if row else 0,
@@ -225,8 +225,8 @@ if _is_postgres:
                             "centroid_lat": det.get("centroid_lat"),
                             "centroid_lon": det.get("centroid_lon")
                         })
-                except:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Failed to parse cluster results (pg): {e}")
         
         return clusters
 
@@ -354,9 +354,9 @@ else:
                         bt = det.get("min_bt")
                         if bt and (min_bt is None or bt < min_bt):
                             min_bt = bt
-                except:
-                    pass
-        
+                except Exception as e:
+                    logger.warning(f"Failed to parse results row (sqlite): {e}")
+
         return {
             "total_analyses": row["total_analyses"] if row else 0,
             "completed_analyses": row["completed"] if row else 0,
@@ -394,7 +394,7 @@ else:
                             "centroid_lat": det.get("centroid_lat"),
                             "centroid_lon": det.get("centroid_lon")
                         })
-                except:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Failed to parse cluster results (sqlite): {e}")
         
         return clusters

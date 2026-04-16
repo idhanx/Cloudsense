@@ -89,7 +89,6 @@ async def upload_file(
 
         # Run inference in thread pool
         logger.info(f"🧠 Starting inference for {analysis_id}...")
-        IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
         result = await asyncio.to_thread(
             _run_inference_sync, file_path, file_ext, settings.OUTPUT_DIR, analysis_id
         )
@@ -149,7 +148,17 @@ async def download_output(
     if filename not in ALLOWED_OUTPUT_FILES:
         raise HTTPException(status_code=400, detail=f"Invalid file. Options: {ALLOWED_OUTPUT_FILES}")
 
+    # Sanitize analysis_id — must be a UUID (no path separators or traversal)
+    import re
+    if not re.fullmatch(r"[0-9a-f\-]{36}", analysis_id):
+        raise HTTPException(status_code=400, detail="Invalid analysis ID")
+
     file_path = os.path.join(settings.OUTPUT_DIR, analysis_id, filename)
+
+    # Confirm resolved path is still inside OUTPUT_DIR (belt-and-suspenders)
+    if not os.path.realpath(file_path).startswith(os.path.realpath(settings.OUTPUT_DIR)):
+        raise HTTPException(status_code=400, detail="Invalid path")
+
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
 

@@ -247,15 +247,12 @@ def get_dashboard_stats() -> Dict:
                 stats["min_bt"] = min(min_bts) if min_bts else 0
                 stats["mean_radius"] = sum(radii) / len(radii) if radii else 0
                 
-                # Approximate cloud top height from BT (simple lapse rate approximation)
-                # Height ~ (SurfaceTemp - BT) / LapseRate
-                # Ensuring positive height
+                # Approximate cloud top height from BT (ISA standard: 288K surface, 6.5 K/km lapse rate)
                 avg_bt = sum(d.get('mean_bt', 0) for d in detections) / len(detections)
-                stats["avg_cloud_height"] = max(0, (300 - avg_bt) / 6.5) 
+                stats["avg_cloud_height"] = max(0, (288 - avg_bt) / 6.5)
                 
         except Exception as e:
             print(f"Error parsing dashboard stats: {e}")
-            
     conn.close()
     return stats
 
@@ -295,7 +292,8 @@ def get_all_recent_clusters(limit: int = 50) -> List[Dict]:
                         "intensity": (300 - d.get('min_bt', 300)) / 100 # Normalize 0-1
                     }
                     all_clusters.append(cluster)
-            except:
+            except Exception as e:
+                logger.warning(f"Failed to parse results for analysis {row['id']}: {e}")
                 continue
                 
     return all_clusters[:limit]

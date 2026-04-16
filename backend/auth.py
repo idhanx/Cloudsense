@@ -9,7 +9,12 @@ import jwt
 import os
 
 # JWT Configuration - use default secret for development
-JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-please-change-in-production-12345678")
+JWT_SECRET = os.getenv("JWT_SECRET", "")
+if not JWT_SECRET or len(JWT_SECRET) < 32:
+    raise RuntimeError(
+        "JWT_SECRET env var must be set and >= 32 characters. "
+        'Generate with: python -c "import secrets; print(secrets.token_urlsafe(64))"'
+    )
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24
 

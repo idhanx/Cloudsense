@@ -10,28 +10,35 @@ from collections import defaultdict
 
 
 class RateLimiter:
-    """Simple in-memory rate limiter."""
-    
+    """Simple in-memory rate limiter with stale-entry eviction."""
+
     def __init__(self, max_requests: int = 100, window_seconds: int = 60):
         self.max_requests = max_requests
         self.window_seconds = window_seconds
-        self.requests = defaultdict(list)
-    
+        self.requests: defaultdict = defaultdict(list)
+        self._last_eviction: float = time.time()
+        self._eviction_interval: int = 300  # evict stale clients every 5 min
+
+    def _evict_stale(self, now: float):
+        """Remove clients with no recent requests to prevent unbounded growth."""
+        if now - self._last_eviction < self._eviction_interval:
+            return
+        stale = [ip for ip, times in self.requests.items() if not times or now - times[-1] > self.window_seconds]
+        for ip in stale:
+            del self.requests[ip]
+        self._last_eviction = now
+
     def check(self, client_id: str):
         """Check if client has exceeded rate limit."""
         now = time.time()
-        # Clean old requests
-        self.requests[client_id] = [
-            req_time for req_time in self.requests[client_id]
-            if now - req_time < self.window_seconds
-        ]
-        
+        self._evict_stale(now)
+        self.requests[client_id] = [t for t in self.requests[client_id] if now - t < self.window_seconds]
+
         if len(self.requests[client_id]) >= self.max_requests:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Rate limit exceeded"
+                detail="Rate limit exceeded",
             )
-        
         self.requests[client_id].append(now)
 
 
