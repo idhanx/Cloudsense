@@ -330,7 +330,7 @@ class InferencePipeline:
             min_area = 25000.0     # Larger minimum area to filter noise
         else:
             prob_threshold = self.PROB_THRESHOLD  # 0.5 for H5 (calibrated data)
-            min_area = self.MIN_AREA_KM2          # 20000 km²
+            min_area = self.MIN_AREA_KM2          # 34,800 km² — IMD TCC definition
         
         binary_mask = (prob_native > prob_threshold).astype(np.uint8)
         
@@ -493,14 +493,15 @@ class InferencePipeline:
 
             tcc_score = min(tcc_score, 100)
 
-            # Stricter classification bands
-            if tcc_score >= 80:
+            # Stricter classification bands — require BOTH high score AND minimum physical size
+            # A "Confirmed TCC" must have: score >= 80 AND area >= 34,800 km² AND min_bt < 235K
+            if tcc_score >= 80 and area_km2 >= 34800 and min_bt < 235.0:
                 classification = 'Confirmed TCC'
                 is_tcc = True
-            elif tcc_score >= 60:
+            elif tcc_score >= 60 and area_km2 >= 20000 and min_bt < 245.0:
                 classification = 'Probable TCC'
                 is_tcc = True
-            elif tcc_score >= 35:
+            elif tcc_score >= 35 and area_km2 >= 10000:
                 classification = 'Possible TCC'
                 is_tcc = False
             else:
