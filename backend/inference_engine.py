@@ -53,6 +53,11 @@ class InferencePipeline:
     # Geophysical constraints
     MIN_AREA_KM2 = 34800.0      # Problem statement: 90% of area of 1° radius circle
     PIXEL_RESOLUTION_KM = 4.0   # INSAT-3D native resolution (km/pixel)
+
+    # Cloud-top height formula — standard atmosphere lapse rate 6.5 K/km
+    # Reference surface temperature: 288K (ISA standard, 15°C at sea level)
+    SURFACE_TEMP_K = 288.0
+    LAPSE_RATE_K_PER_KM = 6.5
     
     # Dynamic dataset discovery keys
     IR_CANDIDATES = ['IMG_TIR1', 'TIR1', 'IR', 'IR1', 'IR_BT', 'Band4', 'IMG_TIR']
@@ -413,14 +418,14 @@ class InferencePipeline:
                 radius_min_km = radius_mean_km
             
             # ── CLOUD-TOP HEIGHT — Problem Statement Requirement ──
-            # Standard atmosphere lapse rate: ~6.5 K/km from ~300K surface
+            # Standard atmosphere: lapse rate 6.5 K/km, surface ref 288K (ISA)
             bt_for_height = region_bt[region_bt < 280]  # Only consider cloud pixels
             if len(bt_for_height) > 0:
-                max_cloud_top_height_km = float(max(0, (300 - np.min(bt_for_height)) / 6.5))
-                mean_cloud_top_height_km = float(max(0, (300 - np.mean(bt_for_height)) / 6.5))
+                max_cloud_top_height_km = float(max(0, (self.SURFACE_TEMP_K - np.min(bt_for_height)) / self.LAPSE_RATE_K_PER_KM))
+                mean_cloud_top_height_km = float(max(0, (self.SURFACE_TEMP_K - np.mean(bt_for_height)) / self.LAPSE_RATE_K_PER_KM))
             else:
-                max_cloud_top_height_km = float(max(0, (300 - min_bt) / 6.5))
-                mean_cloud_top_height_km = float(max(0, (300 - mean_bt) / 6.5))
+                max_cloud_top_height_km = float(max(0, (self.SURFACE_TEMP_K - min_bt) / self.LAPSE_RATE_K_PER_KM))
+                mean_cloud_top_height_km = float(max(0, (self.SURFACE_TEMP_K - mean_bt) / self.LAPSE_RATE_K_PER_KM))
             
             # ── COLD CORE RATIO ──
             cold_pixels = int(np.sum(region_bt < 235.0))
@@ -494,11 +499,11 @@ class InferencePipeline:
             tcc_score = min(tcc_score, 100)
 
             # Stricter classification bands — require BOTH high score AND minimum physical size
-            # A "Confirmed TCC" must have: score >= 80 AND area >= 34,800 km² AND min_bt < 235K
-            if tcc_score >= 80 and area_km2 >= 34800 and min_bt < 235.0:
+            # A "Confirmed TCC" must have: score >= 80 AND area >= 34,800 km² AND min_bt < 220K (README spec)
+            if tcc_score >= 80 and area_km2 >= 34800 and min_bt < 220.0:
                 classification = 'Confirmed TCC'
                 is_tcc = True
-            elif tcc_score >= 60 and area_km2 >= 20000 and min_bt < 245.0:
+            elif tcc_score >= 60 and area_km2 >= 20000 and min_bt < 235.0:
                 classification = 'Probable TCC'
                 is_tcc = True
             elif tcc_score >= 35 and area_km2 >= 10000:

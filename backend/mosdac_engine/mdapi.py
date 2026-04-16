@@ -32,8 +32,12 @@ def preprocess_json(raw_json):
 # ===================== LOAD CONFIG =====================
 def load_config():
     if not os.path.exists("config.json"):
-        print("[ERROR] config.json not found")
-        sys.exit(1)
+        # Return empty config — caller must check before using credentials
+        return {
+            "user_credentials": {"username": "", "password": ""},
+            "search_parameters": {"datasetId": ""},
+            "download_settings": {"download_path": ""}
+        }
 
     raw = open("config.json", "r").read()
     try:
@@ -44,7 +48,11 @@ def load_config():
     for key in ["user_credentials", "search_parameters"]:
         if key not in cfg:
             print(f"[ERROR] Missing '{key}' in config.json")
-            sys.exit(1)
+            return {
+                "user_credentials": {"username": "", "password": ""},
+                "search_parameters": {"datasetId": ""},
+                "download_settings": {"download_path": ""}
+            }
 
     cfg.setdefault("download_settings", {"download_path": ""})
     return cfg
@@ -238,6 +246,10 @@ def download_file(token, record_id, identifier, prod_date, idx, total):
 
 # ===================== MAIN =====================
 def main():
+    if not datasetId:
+        print("[ERROR] datasetId is required. Check config.json.")
+        sys.exit(1)
+
     total_files = search_results()
 
     # Respect the count limit from config
