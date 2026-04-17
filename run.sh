@@ -1,50 +1,72 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# CloudSense Launcher
+# ─────────────────────────────────────────────────────────────────
+# CloudSense — Local Development Launcher
 # Usage: ./run.sh
+# ─────────────────────────────────────────────────────────────────
+
+BACKEND_PORT=8000
+FRONTEND_PORT=5173
 
 cleanup() {
     echo ""
-    echo "🛑 Stopping CloudSense services..."
-    kill 0
-    exit
+    echo "Stopping CloudSense..."
+    # Kill all background jobs spawned by this script
+    jobs -p | xargs -r kill 2>/dev/null || true
+    exit 0
 }
+trap cleanup SIGINT SIGTERM
 
-trap cleanup SIGINT SIGTERM EXIT
+echo "================================================"
+echo "  CloudSense — Local Dev"
+echo "================================================"
 
-echo "=================================="
-echo "🚀 Starting CloudSense System..."
-echo "=================================="
-
-# 1. Start Backend (FastAPI)
+# ── Backend ──────────────────────────────────────────────────────
 echo ""
-echo "🔹 Starting Backend on port 8000..."
+echo "[1/2] Starting backend on :${BACKEND_PORT}..."
 cd backend
 
-if [ -d "venv" ]; then
+# Activate virtualenv if present
+if [ -f "venv/bin/activate" ]; then
+    # shellcheck disable=SC1091
     source venv/bin/activate
+elif [ -f "../venv/bin/activate" ]; then
+    # shellcheck disable=SC1091
+    source ../venv/bin/activate
 else
-    echo "⚠ venv not found. Using system python."
+    echo "  ⚠  No venv found — using system Python"
 fi
 
-# Use new modular entry point
-uvicorn main:app --reload --port 8000 &
+# Create .env if missing
+if [ ! -f ".env" ]; then
+    cp .env.example .env
+    echo "  ⚠  Created .env from .env.example — edit it before use"
+fi
+
+uvicorn main:app --reload --host 0.0.0.0 --port "${BACKEND_PORT}" &
 BACKEND_PID=$!
 cd ..
 
-# 2. Start Frontend (React/Vite)
-echo ""
-echo "🔹 Starting Frontend on port 5173..."
+# ── Frontend ─────────────────────────────────────────────────────
+echo "[2/2] Starting frontend on :${FRONTEND_PORT}..."
 cd frontend
-npm run dev -- --host &
+
+if [ ! -d "node_modules" ]; then
+    echo "  Installing npm dependencies..."
+    npm install
+fi
+
+npm run dev -- --host 0.0.0.0 --port "${FRONTEND_PORT}" &
 FRONTEND_PID=$!
 cd ..
 
+# ── Ready ─────────────────────────────────────────────────────────
 echo ""
-echo "✅ CloudSense is running!"
-echo "   Backend API: http://localhost:8000/docs"
-echo "   Dashboard:   http://localhost:5173"
+echo "  Backend  →  http://localhost:${BACKEND_PORT}/docs"
+echo "  Frontend →  http://localhost:${FRONTEND_PORT}"
 echo ""
-echo "Press Ctrl+C to stop all services."
+echo "  Press Ctrl+C to stop all services."
+echo ""
 
-wait $BACKEND_PID $FRONTEND_PID
+wait "${BACKEND_PID}" "${FRONTEND_PID}"

@@ -1,91 +1,246 @@
 # CloudSense
 
-**Tropical Cloud Cluster (TCC) Detection System** — Detects and classifies deep convective cloud systems from INSAT-3D/3DR satellite imagery using deep learning.
+**AI-powered Tropical Cloud Cluster (TCC) Detection System**
+
+CloudSense processes INSAT-3DR infrared satellite imagery to automatically detect, classify, and track deep convective cloud systems that can develop into tropical cyclones. It combines a U-Net deep learning model with physics-based meteorological criteria to produce scientifically grounded detections.
+
+---
 
 ## What It Does
 
-CloudSense processes infrared satellite imagery to automatically detect Tropical Cloud Clusters — large convective systems that can develop into tropical cyclones. The system:
+1. **Ingests** INSAT-3DR HDF5 data — fetched live from [MOSDAC](https://mosdac.gov.in) or uploaded manually
+2. **Runs inference** using a U-Net + MobileNetV2 encoder trained on IR brightness temperature (BT) data
+3. **Detects clusters** via DBSCAN on cold-cloud pixels (BT < 218 K), filtering by minimum area (34,800 km²)
+4. **Classifies** each cluster using IMD/WMO criteria (min BT, area, cold-core ratio, cloud-top height)
+5. **Outputs** an annotated overlay PNG, binary mask (.npy), and CF-1.8 compliant NetCDF4 file
+6. **Displays** results on a React dashboard — KPI cards, world map, cluster table, timeline slider
 
-1. **Ingests** satellite data — either fetched live from [MOSDAC](https://mosdac.gov.in) (INSAT-3DR) or uploaded manually as HDF5/image files
-2. **Runs inference** using a U-Net segmentation model trained on IR brightness temperature data
-3. **Classifies** each detection based on minimum brightness temperature:
-   - 🔴 **Confirmed TCC** — min BT < 220K (deep convection)
-   - 🟡 **Likely TCC** — min BT < 235K
-   - ⚪ **Cloud Cluster** — min BT ≥ 235K
-4. **Generates outputs** — annotated overlay PNG, binary mask, and CF-compliant NetCDF
-5. **Displays results** on an interactive dashboard with detection map, cluster table, and analysis details
-
-## Screenshots
-
-After uploading an H5 file:
-- **Dashboard** — KPI cards (active TCCs, min BT, cloud-top height, mean radius), world map with cluster positions, recent analyses feed
-- **Analysis** — Side-by-side IR + TCC mask overlay, detection table with classification badges
-- **Exports** — Download NetCDF and PNG outputs per analysis
+---
 
 ## Quick Start
 
-```bash
-# 1. Install backend
-cd backend
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
+### Option 1 — Local (script)
 
-# 2. Install frontend
+```bash
+# 1. Clone
+git clone https://github.com/idhanx/Cloudsense.git
+cd Cloudsense
+
+# 2. Backend setup
+cd backend
+python -m venv venv
+source venv/bin/activate          # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env
+# Edit .env: set JWT_SECRET to a 32+ char random string
+
+# 3. Frontend setup
 cd ../frontend
 npm install
 
-# 3. Start everything
+# 4. Add model weights
+# Place best_model.pth in model/best_model.pth
+# (See "Model Weights" section below)
+
+# 5. Launch everything
 cd ..
 ./run.sh
 ```
 
-Open **http://localhost:5173** → Sign up → Go to **Data Upload** → Upload an `.h5` file or fetch from MOSDAC.
+Open **http://localhost:5173** → Sign up → **Data Upload** → upload an `.h5` file or fetch from MOSDAC.
 
-## Requirements
+---
 
-| Dependency | Version |
-|------------|---------|
-| Python | 3.10+ |
-| Node.js | 18+ |
-| PyTorch | 2.0+ |
-| Model weights | `model/best_model.pth` |
+### Option 2 — Docker Compose
 
-## How MOSDAC Fetch Works
+```bash
+# Copy and edit environment variables
+cp backend/.env.example backend/.env
+# Edit backend/.env: set JWT_SECRET
 
-1. Enter your [MOSDAC](https://mosdac.gov.in/signup/) credentials on the Data Upload page
-2. Set hours back (default: 6) — fetches recent INSAT-3DR imagery
-3. System downloads `3RIMG_L1C_ASIA_MER` H5 files via MOSDAC API
-4. Each file is automatically run through the U-Net inference pipeline
-5. Results appear on the Dashboard, Analysis, and Exports pages
+# Build and start
+docker compose up --build
+
+# Frontend: http://localhost:80
+# Backend:  http://localhost:8000/docs
+```
+
+For live-reload during development:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
+
+---
+
+## Environment Variables
+
+Copy `backend/.env.example` to `backend/.env` and configure:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `JWT_SECRET` | ✅ | Min 32 chars. Generate: `python -c "import secrets; print(secrets.token_urlsafe(64))"` |
+| `DATABASE_URL` | ✅ | SQLite default (`sqlite:///./cloudsense.db`) or Neon PostgreSQL URL |
+| `CORS_ORIGINS` | ✅ | Comma-separated frontend URLs, e.g. `http://localhost:5173` |
+| `MODEL_PATH` | — | Path to `best_model.pth` (default: `../model/best_model.pth`) |
+| `MAX_UPLOAD_SIZE_MB` | — | Max file upload size in MB (default: `500`) |
+| `RATE_LIMIT_PER_MINUTE` | — | API rate limit per IP (default: `30`) |
+| `GOOGLE_CLIENT_ID` | — | Google OAuth client ID (optional) |
+
+Frontend environment variable (set in Vercel dashboard or `.env` file):
+
+| Variable | Description |
+|----------|-------------|
+| `VITE_API_URL` | Backend URL, e.g. `https://cloudsense-api.onrender.com` |
+
+---
+
+## Deployment
+
+### Backend — Render.com
+
+The `render.yaml` blueprint is included. To deploy:
+
+1. Push to GitHub
+2. Go to [render.com/new](https://render.com/new) → **Blueprint** → connect this repo
+3. Set environment variables in the Render dashboard:
+   - `DATABASE_URL` — Neon PostgreSQL connection string
+   - `CORS_ORIGINS` — your Vercel frontend URL
+4. The `JWT_SECRET` is auto-generated by `render.yaml`
+
+### Frontend — Vercel
+
+1. Import this repo on [vercel.com](https://vercel.com/new)
+2. Set **Root Directory** to `frontend`
+3. Add environment variable:
+   - `VITE_API_URL` = `https://cloudsense-api.onrender.com`
+4. Deploy
+
+---
 
 ## Project Structure
 
 ```
 cloudsense/
-├── backend/                 # FastAPI + SQLite
-│   ├── app.py               # API endpoints (auth, upload, MOSDAC, analysis)
-│   ├── inference_engine.py  # U-Net pipeline (core ML)
-│   ├── db.py                # Database (users + analyses)
-│   ├── mosdac_manager.py    # MOSDAC download orchestrator
-│   └── mosdac_engine/       # mdapi.py (MOSDAC Data Access API)
-├── frontend/                # React + Vite + shadcn/ui
-│   └── src/pages/           # Dashboard, DataUpload, Analysis, Exports
+├── backend/                    # FastAPI application
+│   ├── api/                    # Route handlers
+│   │   ├── auth.py             # Login / signup / verify
+│   │   ├── upload.py           # File upload + inference
+│   │   ├── mosdac.py           # MOSDAC SSE download + inference
+│   │   ├── analysis.py         # Dashboard stats + cluster data
+│   │   └── exports.py          # Export listing
+│   ├── core/
+│   │   ├── config.py           # Settings from env vars
+│   │   ├── database.py         # SQLite / Neon PostgreSQL
+│   │   └── security.py         # Auth middleware + rate limiter
+│   ├── mosdac_engine/
+│   │   └── mdapi.py            # MOSDAC Data Access API
+│   ├── inference_engine.py     # U-Net pipeline (core ML)
+│   ├── main.py                 # FastAPI app factory
+│   ├── requirements.txt
+│   ├── Dockerfile
+│   └── .env.example
+├── frontend/                   # React + Vite + shadcn/ui
+│   ├── src/
+│   │   ├── pages/              # Dashboard, DataUpload, Analysis, Exports
+│   │   ├── components/         # UI components
+│   │   ├── services/           # API client, auth
+│   │   └── hooks/              # React Query hooks
+│   ├── Dockerfile
+│   ├── nginx.conf
+│   └── vercel.json
 ├── model/
-│   └── best_model.pth       # Trained U-Net weights (26MB)
-└── run.sh                   # Launch script
+│   ├── train.py                # U-Net training script
+│   └── best_model.pth          # Trained weights (not in repo — see below)
+├── ml/evaluation/
+│   └── evaluate.py             # Model evaluation pipeline
+├── docker-compose.yml          # Production compose
+├── docker-compose.dev.yml      # Dev overrides (hot reload)
+├── render.yaml                 # Render.com blueprint
+└── run.sh                      # Local dev launcher
 ```
 
-## Tech Stack
+---
 
-| Layer | Technology |
-|-------|-----------|
-| ML Model | PyTorch U-Net with MobileNetV2 encoder |
-| Backend | FastAPI, SQLite, NumPy, SciPy, netCDF4 |
-| Frontend | React 18, Vite, Tailwind CSS, shadcn/ui |
-| Satellite Data | MOSDAC INSAT-3DR `3RIMG_L1C_ASIA_MER` |
+## ML Stack
+
+| Component | Library |
+|-----------|---------|
+| Data Parsing | `h5py` |
+| Numerical Operations | `numpy` |
+| Clustering (label generation) | `sklearn.cluster.DBSCAN` |
+| Model Training | `PyTorch` |
+| Image Augmentation | `albumentations` |
+| Segmentation Architecture | `segmentation_models_pytorch` (U-Net + MobileNetV2 + scSE decoder) |
+| Parameter Extraction | `skimage.measure.regionprops` |
+| NetCDF Output | `xarray`, `netCDF4` |
+
+---
+
+## Model Weights
+
+The trained model (`model/best_model.pth`, ~26 MB) is not stored in this repository.
+
+**To train from scratch:**
+
+```bash
+# Place INSAT-3DR H5 files in dataset/MOSDAC_Data/
+python model/train.py
+# Outputs: model/best_model.pth
+```
+
+**To evaluate:**
+
+```bash
+python ml/evaluation/evaluate.py --model model/best_model.pth --data dataset/MOSDAC_Data/
+# Outputs: evaluation_output/evaluation_results.json, confusion_matrix.png, pr_curve.png
+```
+
+---
+
+## API Reference
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `POST` | `/api/auth/signup` | — | Create account |
+| `POST` | `/api/auth/login` | — | Login, returns JWT |
+| `GET` | `/api/auth/verify` | `x-user-id` | Verify session |
+| `POST` | `/api/upload` | `x-user-id` | Upload H5/image → run inference |
+| `POST` | `/api/mosdac/download` | optional | Fetch MOSDAC data → run inference (SSE stream) |
+| `GET` | `/api/analyses/recent` | — | Recent analyses with results |
+| `GET` | `/api/dashboard/stats` | — | Aggregated KPIs |
+| `GET` | `/api/analysis/clusters` | — | All clusters for map/table |
+| `GET` | `/api/download/{id}/{file}` | — | Download output file |
+| `GET` | `/api/exports` | — | List all exportable outputs |
+| `GET` | `/health` | — | Health check |
+
+Interactive docs: `http://localhost:8000/docs`
+
+---
+
+## TCC Classification Criteria
+
+| Classification | Min BT | Score | Area |
+|---------------|--------|-------|------|
+| Confirmed TCC | < 220 K | ≥ 80 | ≥ 34,800 km² |
+| Probable TCC | < 235 K | ≥ 60 | ≥ 20,000 km² |
+| Possible TCC | — | ≥ 35 | ≥ 10,000 km² |
+| Cloud Cluster | — | < 35 | any |
+
+Score is computed from min BT (max 40 pts), area (max 25 pts), cold-core ratio (max 25 pts), and mean BT bonus (max 10 pts).
+
+---
+
+## Requirements
+
+| Dependency | Version |
+|-----------|---------|
+| Python | 3.11+ |
+| Node.js | 18+ |
+| PyTorch | 2.0+ (CPU build for deployment) |
+
+---
 
 ## License
 
 See [LICENSE](LICENSE) for details.
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed system design and API reference.

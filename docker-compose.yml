@@ -1,0 +1,61 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────
+# CloudSense — Docker Compose
+# Development:  docker compose up
+# Production:   docker compose -f docker-compose.yml -f docker-compose.prod.yml up
+# ─────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Backend (FastAPI) ──────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cloudsense-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - JWT_SECRET=${JWT_SECRET}
+      - DATABASE_URL=${DATABASE_URL:-sqlite:////app/cloudsense.db}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173,http://localhost:80}
+      - MODEL_PATH=/app/model/best_model.pth
+      - MOSDAC_DATA_DIR=/app/dataset/MOSDAC_Data
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # Persist uploads and inference outputs across restarts
+      - backend_uploads:/app/uploads
+      - backend_output:/app/output
+      # Mount model weights (not copied into image — too large)
+      - ./model:/app/model:ro
+      # Mount dataset directory for MOSDAC downloads
+      - ./dataset:/app/dataset
+      # Dev mode: live-reload source changes without rebuilding
+      - ./backend:/app:cached
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ── Frontend (React + Vite dev server) ────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:8000
+    container_name: cloudsense-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  backend_uploads:
+  backend_output:

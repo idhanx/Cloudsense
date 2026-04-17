@@ -1,23 +1,44 @@
+# ─────────────────────────────────────────────────────────────────
+# CloudSense — Render.com Deployment
+# Docs: https://render.com/docs/blueprint-spec
+# ─────────────────────────────────────────────────────────────────
+
 services:
+
+  # ── Backend API (FastAPI on Render Web Service) ───────────────
   - type: web
     name: cloudsense-api
     runtime: python
     plan: starter
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT"
     rootDir: backend
-    envVars:
-      - key: JWT_SECRET
-        generateValue: true
-      - key: DATABASE_URL
-        sync: false
-      - key: GOOGLE_CLIENT_ID
-        sync: false
-      - key: CORS_ORIGINS
-        sync: false
-      - key: PYTHONUNBUFFERED
-        value: "1"
-      - key: PYTHON_VERSION
-        value: "3.11.8"
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeploy: true
+    envVars:
+      # Auto-generated strong secret — rotates on first deploy
+      - key: JWT_SECRET
+        generateValue: true
+
+      # Set manually in Render dashboard → Environment
+      - key: DATABASE_URL
+        sync: false           # Neon PostgreSQL connection string
+
+      - key: CORS_ORIGINS
+        sync: false           # e.g. https://your-app.vercel.app
+
+      - key: GOOGLE_CLIENT_ID
+        sync: false           # Optional: Google OAuth
+
+      - key: MODEL_PATH
+        value: /opt/render/project/src/model/best_model.pth
+
+      # Runtime settings
+      - key: PYTHON_VERSION
+        value: "3.11.8"
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: MAX_UPLOAD_SIZE_MB
+        value: "200"
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "30"
