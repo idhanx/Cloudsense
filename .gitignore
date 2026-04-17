@@ -50,6 +50,7 @@ dataset/
 backend/uploads/
 backend/output/
 backend/config.json
+backend/cloudsense.db
 evaluation_output/
 ml/evaluation/evaluation_output/
 

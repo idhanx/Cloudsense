@@ -1,76 +1,71 @@
 import { useQuery } from '@tanstack/react-query';
-import axios from 'axios';
 import { useAnalysisContext } from '../contexts/AnalysisContext';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
+/**
+ * Hook for fetching recent analyses list.
+ * The backend exposes /api/analyses/recent — this is the only analysis
+ * endpoint that exists. The old /trajectory, /metadata, /status endpoints
+ * do not exist in the backend and have been removed.
+ */
+export const useRecentAnalyses = (limit = 10) => {
+    return useQuery({
+        queryKey: ['recentAnalyses', limit],
+        queryFn: async () => {
+            const response = await fetch(`${API_BASE}/api/analyses/recent?limit=${limit}`);
+            if (!response.ok) throw new Error(`Failed to fetch analyses: ${response.status}`);
+            return response.json();
+        },
+        staleTime: 10_000, // 10 seconds
+    });
+};
+
+/**
+ * Hook for fetching dashboard KPI stats.
+ */
+export const useDashboardStats = () => {
+    return useQuery({
+        queryKey: ['dashboardStats'],
+        queryFn: async () => {
+            const response = await fetch(`${API_BASE}/api/dashboard/stats`);
+            if (!response.ok) throw new Error(`Failed to fetch stats: ${response.status}`);
+            return response.json();
+        },
+        staleTime: 15_000,
+    });
+};
+
+/**
+ * Hook for fetching all cluster data for the map/table.
+ */
+export const useClusters = (limit = 50) => {
+    return useQuery({
+        queryKey: ['clusters', limit],
+        queryFn: async () => {
+            const response = await fetch(`${API_BASE}/api/analysis/clusters?limit=${limit}`);
+            if (!response.ok) throw new Error(`Failed to fetch clusters: ${response.status}`);
+            return response.json();
+        },
+        staleTime: 15_000,
+    });
+};
+
+/**
+ * Legacy hook — kept for backward compatibility.
+ * Returns the current analysis ID from context + recent analyses.
+ */
 export const useAnalysis = () => {
     const { currentAnalysisId } = useAnalysisContext();
+    const { data: analyses, isLoading, error } = useRecentAnalyses();
 
-    // Fetch trajectory data
-    const {
-        data: trajectory,
-        isLoading: trajectoryLoading,
-        error: trajectoryError
-    } = useQuery({
-        queryKey: ['trajectory', currentAnalysisId],
-        queryFn: async () => {
-            const response = await axios.get(`${API_BASE}/api/analysis/${currentAnalysisId}/trajectory`);
-            return response.data;
-        },
-        enabled: !!currentAnalysisId,
-        staleTime: 30000, // 30 seconds
-    });
-
-    // Fetch metadata
-    const {
-        data: metadata,
-        isLoading: metadataLoading,
-        error: metadataError
-    } = useQuery({
-        queryKey: ['metadata', currentAnalysisId],
-        queryFn: async () => {
-            const response = await axios.get(`${API_BASE}/api/analysis/${currentAnalysisId}/metadata`);
-            return response.data;
-        },
-        enabled: !!currentAnalysisId,
-        staleTime: 60000, // 1 minute
-    });
-
-    // Fetch status
-    const {
-        data: status,
-        isLoading: statusLoading,
-        error: statusError
-    } = useQuery({
-        queryKey: ['status', currentAnalysisId],
-        queryFn: async () => {
-            const response = await axios.get(`${API_BASE}/api/analysis/${currentAnalysisId}/status`);
-            return response.data;
-        },
-        enabled: !!currentAnalysisId,
-        refetchInterval: 5000, // Poll every 5 seconds if processing
-        refetchIntervalInBackground: false,
-    });
+    const currentAnalysis = analyses?.find(a => a.analysis_id === currentAnalysisId) || null;
 
     return {
         currentAnalysisId,
-        trajectory,
-        metadata,
-        status,
-        isLoading: trajectoryLoading || metadataLoading || statusLoading,
-        error: trajectoryError || metadataError || statusError,
+        currentAnalysis,
+        analyses,
+        isLoading,
+        error,
     };
-};
-
-// Hook for fetching recent analyses list
-export const useRecentAnalyses = () => {
-    return useQuery({
-        queryKey: ['recentAnalyses'],
-        queryFn: async () => {
-            const response = await axios.get(`${API_BASE}/api/analyses/recent`);
-            return response.data;
-        },
-        staleTime: 10000, // 10 seconds
-    });
 };

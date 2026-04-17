@@ -1,22 +1,30 @@
 /**
  * CloudSense — Auth Service
- * Local auth using localStorage. No external auth service required.
+ * Authenticates against the CloudSense backend (/api/auth/login, /api/auth/signup).
  */
 
-// Minimal auth client — stores user locally, no backend auth needed
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
 export const authClient = {
   signIn: {
     email: async ({ email, password }) => {
-      // Simple local auth — accept any email/password
       if (!email || !password) {
         return { data: null, error: { message: 'Email and password are required' } };
       }
-      const user = {
-        id: email,
-        email,
-        name: email.split('@')[0],
-      };
-      return { data: { user }, error: null };
+      try {
+        const response = await fetch(`${API_BASE}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+        const body = await response.json();
+        if (!response.ok) {
+          return { data: null, error: { message: body.detail || 'Login failed' } };
+        }
+        return { data: { user: body.user, token: body.access_token }, error: null };
+      } catch (err) {
+        return { data: null, error: { message: 'Network error. Please try again.' } };
+      }
     },
   },
 
@@ -25,12 +33,20 @@ export const authClient = {
       if (!email || !password) {
         return { data: null, error: { message: 'Email and password are required' } };
       }
-      const user = {
-        id: email,
-        email,
-        name: name || email.split('@')[0],
-      };
-      return { data: { user }, error: null };
+      try {
+        const response = await fetch(`${API_BASE}/api/auth/signup`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password, username: name || email.split('@')[0] }),
+        });
+        const body = await response.json();
+        if (!response.ok) {
+          return { data: null, error: { message: body.detail || 'Signup failed' } };
+        }
+        return { data: { user: body.user, token: body.access_token }, error: null };
+      } catch (err) {
+        return { data: null, error: { message: 'Network error. Please try again.' } };
+      }
     },
   },
 
