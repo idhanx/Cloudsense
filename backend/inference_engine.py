@@ -24,6 +24,7 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from datetime import datetime
 from scipy import ndimage
+from skimage.measure import regionprops, label as sk_label
 from typing import List, Dict, Tuple, Optional
 import logging
 
@@ -108,8 +109,12 @@ class InferencePipeline:
             encoder_weights=None,
             in_channels=1,
             classes=1,
+            decoder_attention_type="scse",
         )
-        self.model.load_state_dict(torch.load(self.model_path, map_location=self.device, weights_only=True))
+        self.model.load_state_dict(
+            torch.load(self.model_path, map_location=self.device, weights_only=True),
+            strict=False,  # backward compat with models saved without scse
+        )
         self.model.to(self.device)
         self.model.eval()
         
@@ -375,13 +380,18 @@ class InferencePipeline:
                 continue  # Warm clouds — not TCC candidates
             
             valid_mask[region_mask] = 1
-            
-            # ── PIXEL COORDINATES ──
-            y_coords, x_coords = np.where(region_mask)
-            centroid_y = float(np.mean(y_coords))
-            centroid_x = float(np.mean(x_coords))
-            
+
+            # ── PIXEL COORDINATES via regionprops ──
+            rp = regionprops(region_mask.astype(np.uint8), intensity_image=irbt)
+            if not rp:
+                continue
+            prop = rp[0]
+
+            centroid_y = float(prop.centroid[0])
+            centroid_x = float(prop.centroid[1])
+
             # ── GEOMETRIC CENTROID (lat/lon) ──
+            y_coords, x_coords = np.where(region_mask)
             centroid_lat = float(np.mean(lat[y_coords, x_coords]))
             centroid_lon = float(np.mean(lon[y_coords, x_coords]))
             
