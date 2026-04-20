@@ -33,3 +33,46 @@ async def list_exports():
                     },
                 })
     return exports
+
+
+from fastapi.responses import FileResponse
+from fastapi import HTTPException
+import re
+
+
+@router.get("/download/{analysis_id}/output.nc")
+async def download_netcdf(analysis_id: str):
+    """
+    Download NetCDF file for a completed analysis.
+
+    Args:
+        analysis_id: Analysis UUID
+
+    Returns:
+        FileResponse with Content-Type: application/x-netcdf
+
+    Raises:
+        HTTPException 400 if analysis_id is not a valid UUID
+        HTTPException 404 if file not found
+    """
+    # Validate analysis_id is a UUID — prevents path traversal
+    if not re.fullmatch(r"[0-9a-f\-]{36}", analysis_id):
+        raise HTTPException(status_code=400, detail="Invalid analysis ID")
+
+    netcdf_path = os.path.join(settings.OUTPUT_DIR, analysis_id, "output.nc")
+
+    # Belt-and-suspenders: confirm resolved path stays inside OUTPUT_DIR
+    if not os.path.realpath(netcdf_path).startswith(os.path.realpath(settings.OUTPUT_DIR)):
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    if not os.path.exists(netcdf_path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"NetCDF file not found for analysis {analysis_id}"
+        )
+
+    return FileResponse(
+        netcdf_path,
+        media_type="application/x-netcdf",
+        filename=f"{analysis_id}_output.nc"
+    )

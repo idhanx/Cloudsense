@@ -28,6 +28,8 @@ from skimage.measure import regionprops, label as sk_label
 from typing import List, Dict, Tuple, Optional
 import logging
 
+from core.temporal_tracker import TemporalTracker, Track
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,13 +49,18 @@ class InferencePipeline:
     PROB_THRESHOLD = 0.5        # Balanced threshold to reduce false positives
     
     # Physics-based thresholds
-    BT_COLD_THRESHOLD = 218.0   # Kelvin - TCC cloud tops
+    BT_COLD_THRESHOLD = 221.0   # Kelvin - TCC cloud tops (IMD/WMO specification)
     MIN_BT = 180.0              # Normalization min
     MAX_BT = 320.0              # Normalization max
     
     # Geophysical constraints
     MIN_AREA_KM2 = 34800.0      # Problem statement: 90% of area of 1° radius circle
     PIXEL_RESOLUTION_KM = 4.0   # INSAT-3D native resolution (km/pixel)
+    MIN_SEPARATION_KM = 1200.0  # Minimum separation between TCC centroids
+    
+    # Geographic bounding boxes (lat_min, lat_max, lon_min, lon_max)
+    NORTH_INDIAN_OCEAN = (0.0, 30.0, 30.0, 100.0)   # 0°–30°N, 30°–100°E
+    SOUTH_INDIAN_OCEAN = (-30.0, 0.0, 30.0, 110.0)  # 0°–30°S, 30°–110°E
 
     # Cloud-top height formula — standard atmosphere lapse rate 6.5 K/km
     # Reference surface temperature: 288K (ISA standard, 15°C at sea level)
@@ -76,6 +83,85 @@ class InferencePipeline:
         a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
         return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     
+    def _is_in_valid_region(self, lat: float, lon: float) -> bool:
+        """
+        Check if centroid falls within North or South Indian Ocean regions.
+        
+        Args:
+            lat: Latitude in degrees
+            lon: Longitude in degrees
+        
+        Returns:
+            True if in valid region, False otherwise
+        """
+        # Handle NaN coordinates
+        if np.isnan(lat) or np.isnan(lon):
+            logger.warning(f"Invalid centroid coordinates: lat={lat}, lon={lon}")
+            return False
+        
+        # Check North Indian Ocean (0°–30°N, 30°–100°E)
+        lat_min_n, lat_max_n, lon_min_n, lon_max_n = self.NORTH_INDIAN_OCEAN
+        if lat_min_n <= lat <= lat_max_n and lon_min_n <= lon <= lon_max_n:
+            return True
+        
+        # Check South Indian Ocean (0°–30°S, 30°–110°E)
+        lat_min_s, lat_max_s, lon_min_s, lon_max_s = self.SOUTH_INDIAN_OCEAN
+        if lat_min_s <= lat <= lat_max_s and lon_min_s <= lon <= lon_max_s:
+            return True
+        
+        return False
+    
+    def _enforce_separation_constraint(self, detections: List[Dict]) -> List[Dict]:
+        """
+        Enforce minimum 1200 km separation between cluster centroids.
+        
+        When clusters are closer than MIN_SEPARATION_KM, retain only the
+        largest by area and discard others.
+        
+        Args:
+            detections: List of detection dicts with centroid_lat, centroid_lon, area_km2
+        
+        Returns:
+            Filtered list with separation constraint enforced
+        """
+        if len(detections) <= 1:
+            return detections
+        
+        # Sort by area (largest first)
+        sorted_detections = sorted(detections, key=lambda d: d['area_km2'], reverse=True)
+        
+        retained = []
+        
+        for detection in sorted_detections:
+            lat = detection['centroid_lat']
+            lon = detection['centroid_lon']
+            
+            # Check distance to all retained detections
+            too_close = False
+            merge_target_id = None
+            
+            for retained_det in retained:
+                distance = self._haversine_km(
+                    lat, lon,
+                    retained_det['centroid_lat'], retained_det['centroid_lon']
+                )
+                
+                if distance < self.MIN_SEPARATION_KM:
+                    too_close = True
+                    merge_target_id = retained_det['cluster_id']
+                    break
+            
+            if too_close:
+                logger.info(
+                    f"  Separation constraint: Discarding cluster {detection['cluster_id']} "
+                    f"at ({lat:.1f}°, {lon:.1f}°), area={detection['area_km2']:.0f}km² "
+                    f"(merged into cluster {merge_target_id}, distance < {self.MIN_SEPARATION_KM}km)"
+                )
+            else:
+                retained.append(detection)
+        
+        return retained
+    
     def __init__(self, model_path: str = None):
         """Initialize with trained model."""
         if model_path is None:
@@ -85,6 +171,7 @@ class InferencePipeline:
         self.model_path = model_path
         self.device = self._get_device()
         self.model = None
+        self.tracker = TemporalTracker(proximity_threshold_km=500.0)
         
         logger.info(f"InferencePipeline initialized (device: {self.device})")
     
@@ -171,7 +258,7 @@ class InferencePipeline:
             irbt = np.where(irbt < 100, np.nan, irbt)
             irbt = np.nan_to_num(irbt, nan=np.nanmean(irbt) if not np.all(np.isnan(irbt)) else 250.0)
             
-            # 4. Lat/Lon (optional)
+            # 4. Lat/Lon — try named arrays first, then derive from Mercator projection
             lat, lon = None, None
             
             lat_dataset = self._find_dataset(f, self.LAT_CANDIDATES)
@@ -182,11 +269,52 @@ class InferencePipeline:
             if lon_dataset is not None:
                 lon = lon_dataset[:].astype(np.float32)
             
+            # Try deriving from Mercator projection (INSAT-3D ASIA_MER product)
+            if (lat is None or lon is None) and 'X' in f and 'Y' in f and 'Projection_Information' in f:
+                try:
+                    lat, lon = self._derive_latlon_from_mercator(f)
+                    logger.info("Derived lat/lon from Mercator projection parameters")
+                except Exception as e:
+                    logger.warning(f"Mercator lat/lon derivation failed: {e}")
+                    lat, lon = None, None
+            
             if lat is None or lon is None:
                 logger.warning("Lat/Lon not found - using synthetic coordinates")
                 lat, lon = self._create_synthetic_coords(irbt.shape)
         
         return irbt, lat, lon
+    
+    def _derive_latlon_from_mercator(self, f) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Derive lat/lon grids from INSAT-3D Mercator projection parameters.
+        
+        INSAT-3D ASIA_MER products store X/Y in metres (Mercator) and
+        Projection_Information attributes with the projection origin and
+        corner coordinates.
+        """
+        import math
+        
+        proj = f['Projection_Information']
+        lon0 = float(proj.attrs['longitude_of_projection_origin'][0])  # central meridian
+        R_major = float(proj.attrs['semi_major_axis'][0])
+        R_minor = float(proj.attrs['semi_minor_axis'][0])
+        
+        x_m = f['X'][:].astype(np.float64)   # shape (W,)
+        y_m = f['Y'][:].astype(np.float64)   # shape (H,)
+        
+        # Mercator inverse projection
+        # lon = lon0 + x / R_major  (in radians → degrees)
+        # lat = 2*atan(exp(y / R_major)) - pi/2  (in radians → degrees)
+        lon_1d = np.degrees(x_m / R_major) + lon0
+        lat_1d = np.degrees(2.0 * np.arctan(np.exp(y_m / R_major)) - math.pi / 2.0)
+        
+        # Build 2-D grids: rows = Y (lat), cols = X (lon)
+        lon_grid, lat_grid = np.meshgrid(lon_1d, lat_1d)
+        
+        logger.info(f"Mercator lat/lon: lat [{lat_grid.min():.1f}, {lat_grid.max():.1f}], "
+                    f"lon [{lon_grid.min():.1f}, {lon_grid.max():.1f}]")
+        
+        return lat_grid.astype(np.float32), lon_grid.astype(np.float32)
     
     def _create_synthetic_coords(self, shape: Tuple[int, int]) -> Tuple[np.ndarray, np.ndarray]:
         """Create synthetic lat/lon grids for data without geolocation."""
@@ -379,8 +507,6 @@ class InferencePipeline:
             if region_min_bt > 250.0:
                 continue  # Warm clouds — not TCC candidates
             
-            valid_mask[region_mask] = 1
-
             # ── PIXEL COORDINATES via regionprops ──
             rp = regionprops(region_mask.astype(np.uint8), intensity_image=irbt)
             if not rp:
@@ -394,6 +520,13 @@ class InferencePipeline:
             y_coords, x_coords = np.where(region_mask)
             centroid_lat = float(np.mean(lat[y_coords, x_coords]))
             centroid_lon = float(np.mean(lon[y_coords, x_coords]))
+
+            # ── GEOGRAPHIC FILTER: Check if centroid is in valid region ──
+            if not self._is_in_valid_region(centroid_lat, centroid_lon):
+                logger.info(f"  Excluding cluster at ({centroid_lat:.1f}°, {centroid_lon:.1f}°): outside Indian Ocean regions")
+                continue
+            
+            valid_mask[region_mask] = 1
             
             # ── CONVECTIVE CENTER (coldest pixel) — Problem Statement Requirement ──
             coldest_idx = np.argmin(region_bt)
@@ -509,8 +642,8 @@ class InferencePipeline:
             tcc_score = min(tcc_score, 100)
 
             # Stricter classification bands — require BOTH high score AND minimum physical size
-            # A "Confirmed TCC" must have: score >= 80 AND area >= 34,800 km² AND min_bt < 220K (README spec)
-            if tcc_score >= 80 and area_km2 >= 34800 and min_bt < 220.0:
+            # A "Confirmed TCC" must have: score >= 80 AND area >= 34,800 km² AND min_bt < 221K (IMD/WMO spec)
+            if tcc_score >= 80 and area_km2 >= 34800 and min_bt < 221.0:
                 classification = 'Confirmed TCC'
                 is_tcc = True
             elif tcc_score >= 60 and area_km2 >= 20000 and min_bt < 235.0:
@@ -559,6 +692,9 @@ class InferencePipeline:
             logger.info(f"  TCC-{len(detections)}: area={area_km2:.0f}km², Tb={min_bt:.0f}/{mean_bt:.0f}/{median_bt:.0f}K, "
                         f"radii={radius_min_km:.0f}/{radius_mean_km:.0f}/{radius_max_km:.0f}km, "
                         f"height={max_cloud_top_height_km:.1f}km, score={tcc_score}")
+        
+        # ── ENFORCE SEPARATION CONSTRAINT (≥ 1200 km between centroids) ──
+        detections = self._enforce_separation_constraint(detections)
         
         # ── RE-NUMBER detections by area (largest first) ──
         if len(detections) > 1:
@@ -799,6 +935,14 @@ class InferencePipeline:
             data_vars["cluster_cold_core_ratio"] = (["cluster"],
                 np.array([d.get("cold_core_ratio", 0) for d in detections], dtype=np.float32),
                 {"long_name": "Cold Core Ratio (fraction of pixels with Tb < 235K)", "units": "1"})
+            
+            # ── Track ID (Temporal Tracking) ──
+            track_ids = [d.get("track_id", "") for d in detections]
+            # Convert to fixed-length string array for NetCDF compatibility
+            max_len = max(len(tid) for tid in track_ids) if track_ids else 32
+            track_id_array = np.array(track_ids, dtype=f'S{max_len}')
+            data_vars["cluster_track_id"] = (["cluster"], track_id_array,
+                {"long_name": "Temporal Track Identifier", "units": "1"})
         
         ds = xr.Dataset(
             data_vars=data_vars,
@@ -857,11 +1001,14 @@ class InferencePipeline:
             prob_native = results['probability_native']
             detections = results['detections']
             
+            # 5. TEMPORAL TRACKING: Assign track IDs
+            detections = self.tracker.update(detections, timestamp)
+            
             tcc_pixels = int(np.sum(final_mask))
             
             logger.info(f"TCC detections: {len(detections)}, Total area: {results['total_tcc_area_km2']:,.0f} km²")
             
-            # 5. Save outputs
+            # 6. Save outputs
             satellite_png_path = os.path.join(file_output_dir, "satellite.png")
             mask_npy_path = os.path.join(file_output_dir, "mask.npy")
             mask_png_path = os.path.join(file_output_dir, "mask.png")
@@ -934,11 +1081,15 @@ class InferencePipeline:
             final_mask = results['final_mask']
             detections = results['detections']
             
+            # 5. TEMPORAL TRACKING: Assign track IDs
+            timestamp = datetime.now()
+            detections = self.tracker.update(detections, timestamp)
+            
             tcc_pixels = int(np.sum(final_mask))
             
             logger.info(f"TCC detections: {len(detections)}, Total area: {results['total_tcc_area_km2']:,.0f} km²")
             
-            # 5. Save outputs
+            # 6. Save outputs
             satellite_png_path = os.path.join(file_output_dir, "satellite.png")
             mask_npy_path = os.path.join(file_output_dir, "mask.npy")
             mask_png_path = os.path.join(file_output_dir, "mask.png")
@@ -957,7 +1108,6 @@ class InferencePipeline:
             
             # Generate NetCDF for image inputs too
             netcdf_path = os.path.join(file_output_dir, "output.nc")
-            timestamp = datetime.now()
             self._save_netcdf(irbt, results['probability_native'], final_mask, lat, lon, timestamp, detections, netcdf_path)
             
             return {

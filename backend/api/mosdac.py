@@ -8,6 +8,7 @@ import json
 import glob
 import uuid
 import subprocess
+import tempfile
 import logging
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, Request
@@ -15,7 +16,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from core.config import settings
-from core.security import get_optional_user_id, rate_limiter  # ✅ FIXED: was get_optional_user
+from core.security import get_optional_user_id, rate_limiter
 from core.database import create_analysis, update_analysis_status, save_analysis_results
 from typing import Optional
 
@@ -46,12 +47,13 @@ def _parse_filename_time(filename: str):
 async def download_mosdac_data(
     request: MOSDACDownloadRequest,
     req: Request,
-    user: Optional[str] = Depends(get_optional_user_id),  # ✅ FIXED: was get_optional_user
+    user: Optional[str] = Depends(get_optional_user_id),
 ):
     """Download INSAT-3DR data from MOSDAC with strict time filtering + run inference."""
     rate_limiter.check(req.client.host)
 
     def stream_generator():
+        config_path = None
         try:
             end_time = datetime.utcnow()
             start_time = end_time - timedelta(hours=request.hours_back)
@@ -61,7 +63,8 @@ async def download_mosdac_data(
 
             yield _sse_event("progress", {"step": "config", "message": "Preparing download configuration..."})
 
-            # Build config for mdapi
+            # Build config for mdapi — write to a unique temp file so concurrent
+            # requests don't clobber each other and credentials aren't left on disk.
             config = {
                 "user_credentials": {"username": request.username, "password": request.password},
                 "search_parameters": {
@@ -81,13 +84,16 @@ async def download_mosdac_data(
                 },
             }
 
-            config_path = os.path.join(settings.BASE_DIR, "config.json")
-            with open(config_path, "w") as f:
+            # Write to a unique temp file — deleted in the finally block
+            fd, config_path = tempfile.mkstemp(
+                suffix=".json", prefix="mosdac_cfg_", dir=settings.BASE_DIR
+            )
+            with os.fdopen(fd, "w") as f:
                 json.dump(config, f, indent=2)
 
             yield _sse_event("progress", {"step": "connect", "message": "Connecting to MOSDAC API..."})
 
-            # Run mdapi.py
+            # Run mdapi.py, passing the temp config path via env var
             mdapi_path = os.path.join(settings.BASE_DIR, "mosdac_engine", "mdapi.py")
             if not os.path.exists(mdapi_path):
                 yield _sse_event("error", {"message": "mdapi.py not found"})
@@ -95,6 +101,9 @@ async def download_mosdac_data(
 
             import sys
             python_exe = sys.executable  # Use same Python as the running process
+            env = os.environ.copy()
+            env["MOSDAC_CONFIG_PATH"] = config_path  # mdapi reads this env var
+
             process = subprocess.Popen(
                 [python_exe, "-u", mdapi_path],
                 cwd=settings.BASE_DIR,
@@ -102,6 +111,7 @@ async def download_mosdac_data(
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,
+                env=env,
             )
 
             noise_patterns = ["%|", "resource_tracker", "UserWarning", "warnings.warn"]
@@ -165,7 +175,7 @@ async def download_mosdac_data(
             })
 
             from api.upload import get_inference_pipeline
-            pipeline = get_inference_pipeline()
+            pipeline = get_inference_pipeline(req)
             results = []
 
             for i, h5_path in enumerate(h5_files, 1):
@@ -227,6 +237,13 @@ async def download_mosdac_data(
         except Exception as e:
             logger.error(f"MOSDAC stream error: {e}")
             yield _sse_event("error", {"message": str(e)})
+        finally:
+            # Always delete the temp config file — it contains user credentials
+            if config_path and os.path.exists(config_path):
+                try:
+                    os.unlink(config_path)
+                except OSError as e:
+                    logger.warning(f"Failed to delete temp config {config_path}: {e}")
 
     return StreamingResponse(
         stream_generator(),

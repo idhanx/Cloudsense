@@ -20,25 +20,25 @@ from core.database import create_analysis, update_analysis_status, save_analysis
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["upload"])
 
-# ── Lazy-loaded inference pipeline ──
-_inference_pipeline = None
+# ── Get inference pipeline from app state (loaded at startup) ──
+def get_inference_pipeline(request: Request):
+    """Get the model loaded during app startup in lifespan.
+    This is much faster than lazy-loading and prevents blocking the first request.
+    """
+    pipeline = getattr(request.app.state, "inference_pipeline", None)
+    if pipeline is None:
+        raise RuntimeError("Inference pipeline not loaded. Check startup logs.")
+    return pipeline
 
-def get_inference_pipeline():
-    global _inference_pipeline
-    if _inference_pipeline is None:
-        from inference_engine import InferencePipeline
-        _inference_pipeline = InferencePipeline(model_path=settings.MODEL_PATH)
-        logger.info("Inference pipeline loaded")
-    return _inference_pipeline
 
-
-def _run_inference_sync(file_path: str, file_ext: str, output_dir: str, analysis_id: str):
-    IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
-    pipeline = get_inference_pipeline()
+def _run_inference_sync(file_path: str, file_ext: str, output_dir: str, analysis_id: str, pipeline):
     if file_ext in IMAGE_EXTENSIONS:
         return pipeline.process_image(file_path, output_dir, analysis_id)
     else:
         return pipeline.process_file(file_path, output_dir, analysis_id)
+
+
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 
 
 # ── Upload Endpoint (Neon Auth Required) ──
@@ -89,8 +89,9 @@ async def upload_file(
 
         # Run inference in thread pool
         logger.info(f"🧠 Starting inference for {analysis_id}...")
+        pipeline = get_inference_pipeline(request)
         result = await asyncio.to_thread(
-            _run_inference_sync, file_path, file_ext, settings.OUTPUT_DIR, analysis_id
+            _run_inference_sync, file_path, file_ext, settings.OUTPUT_DIR, analysis_id, pipeline
         )
 
         if result["success"]:

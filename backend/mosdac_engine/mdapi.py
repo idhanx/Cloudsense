@@ -31,7 +31,10 @@ def preprocess_json(raw_json):
 
 # ===================== LOAD CONFIG =====================
 def load_config():
-    if not os.path.exists("config.json"):
+    # Prefer the path passed via env var (set by the API to avoid credential collisions)
+    config_file = os.environ.get("MOSDAC_CONFIG_PATH", "config.json")
+
+    if not os.path.exists(config_file):
         # Return empty config — caller must check before using credentials
         return {
             "user_credentials": {"username": "", "password": ""},
@@ -39,7 +42,7 @@ def load_config():
             "download_settings": {"download_path": ""}
         }
 
-    raw = open("config.json", "r").read()
+    raw = open(config_file, "r").read()
     try:
         cfg = json.loads(raw)
     except json.JSONDecodeError:
